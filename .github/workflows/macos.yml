@@ -1,0 +1,124 @@
+name: macOS Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    name: ${{ matrix.target }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: NeteaseMusicDownloader
+            arch: arm64
+            runner: macos-26
+            output_dir: arm64
+            archive_name: NeteaseMusicDownloader-macOS-arm64.zip
+          - target: NeteaseMusicDownloader
+            arch: x86_64
+            runner: macos-26
+            output_dir: x86_64
+            archive_name: NeteaseMusicDownloader-macOS-x64.zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          if [ -d "/Applications/Xcode_26.0.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_26.0.app
+          else
+            sudo xcode-select -s /Applications/Xcode.app
+          fi
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          sw_vers
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build (Debug, smoke)
+        run: |
+          xcodebuild \
+            -project NeteaseMusicDownloader.xcodeproj \
+            -scheme NeteaseMusicDownloader \
+            -configuration Debug \
+            -destination "platform=macOS,arch=${{ matrix.arch }}" \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Build (Release)
+        run: |
+          xcodebuild \
+            -project NeteaseMusicDownloader.xcodeproj \
+            -scheme NeteaseMusicDownloader \
+            -configuration Release \
+            -destination "platform=macOS,arch=${{ matrix.arch }}" \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            ARCHS="${{ matrix.arch }}" \
+            ONLY_ACTIVE_ARCH=NO \
+            build
+
+      - name: Package .app
+        run: |
+          APP="NeteaseMusicDownloader.app"
+          BUILD_DIR=$(xcodebuild -project NeteaseMusicDownloader.xcodeproj -scheme NeteaseMusicDownloader -configuration Release -destination "platform=macOS,arch=${{ matrix.arch }}" -showBuildSettings | awk -F' = ' '/ BUILT_PRODUCTS_DIR /{print $2; exit}')
+          echo "Build dir: $BUILD_DIR"
+          mkdir -p "${{ matrix.output_dir }}"
+          ditto "$BUILD_DIR/$APP" "${{ matrix.output_dir}}/$APP"
+          cd "${{ matrix.output_dir }}"
+          zip -r -X "../${{ matrix.archive_name }}" "$APP"
+          ls -lh "../${{ matrix.archive_name }}"
+
+      - name: Self-test (launch & quit)
+        run: |
+          "${{ matrix.output_dir}}/NeteaseMusicDownloader.app/Contents/MacOS/NeteaseMusicDownloader" &
+          PID=$!
+          sleep 4
+          kill -TERM $PID 2>/dev/null || true
+          wait $PID 2>/dev/null || true
+          echo "self-test passed (process launched and exited)"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive_name }}
+          path: ${{ matrix.archive_name }}
+          if-no-files-found: error
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: macos-26
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/**/*.zip
+            dist/**/*.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

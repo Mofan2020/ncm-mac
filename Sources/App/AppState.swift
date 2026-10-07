@@ -2,9 +2,13 @@ import SwiftUI
 import Combine
 
 /// 全局应用状态。聚合所有服务，方便视图用 @EnvironmentObject 拿到。
+///
+/// ``settings`` 是 ``var``（不是 ``let``），因为 SwiftUI binding ``$appState.settings.foo``
+/// 需要可写引用。这里的 ``SettingsStore`` 本身是不可变性的（构造时从磁盘恢复默认值，之后绑定
+/// 监听 @Published 字段），所以 ``var`` 引用没问题。
 @MainActor
 final class AppState: ObservableObject {
-    let settings: SettingsStore
+    var settings: SettingsStore
     let api: NeteaseAPI
     let auth: AuthService
     let library: LibraryStore
@@ -23,11 +27,11 @@ final class AppState: ObservableObject {
         let deviceId = AppState.persistedOrFreshDeviceId()
         let api = NeteaseAPI(deviceId: deviceId)
         let auth = AuthService(api: api)
-        let library = LibraryStore()
-        let downloader = DownloadManager(api: api, library: library, settings: settings)
-        let player = PlayerService(library: library, settings: settings)
+        let library = LibraryStore(api: api, auth: auth)
         let lyrics = LyricsService(api: api, settings: settings)
         let localMusic = LocalMusicService(settings: settings)
+        let downloader = DownloadManager(api: api, library: library, settings: settings)
+        let player = PlayerService(library: library, settings: settings, api: api, lyricsService: lyrics)
         let updater = UpdateService()
 
         self.settings = settings
@@ -48,7 +52,23 @@ final class AppState: ObservableObject {
             library?.refreshAccountPlaylists()
             downloader?.refreshQualityAvailability()
         }
+        // 更新通道变化同步到 updater
+        settings.$updateChannel
+            .receive(on: RunLoop.main)
+            .sink { [weak updater] channel in
+                updater?.channel = channel
+            }
+            .store(in: &cancellables)
+        // 启动后若开启自动更新，5s 后静默检查一次
+        if settings.autoCheckUpdates {
+            Task { [weak updater] in
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                updater?.check(silent: true)
+            }
+        }
     }
+
+    private var cancellables = Set<AnyCancellable>()
 
     /// 全局唯一的设备 ID。每个 macOS 用户保持稳定；首次启动时随机生成。
     private static func persistedOrFreshDeviceId() -> String {

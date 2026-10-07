@@ -1,13 +1,355 @@
 import SwiftUI
+import AppKit
+import Combine
 
-/// 占位：设置页。
+/// 设置页：账号 / 通用 / 下载 / 播放 / 外观 / 更新。
 struct SettingsView: View {
+    @EnvironmentObject private var appState: AppState
+    @State private var showAccount: Bool = false
+
     var body: some View {
+        TabView {
+            accountTab
+                .tabItem { Label("账号", systemImage: "person.crop.circle") }
+            generalTab
+                .tabItem { Label("通用", systemImage: "gearshape") }
+            downloadTab
+                .tabItem { Label("下载", systemImage: "arrow.down.circle") }
+            playbackTab
+                .tabItem { Label("播放", systemImage: "play.circle") }
+            appearanceTab
+                .tabItem { Label("外观", systemImage: "paintbrush") }
+            updateTab
+                .tabItem { Label("更新", systemImage: "arrow.triangle.2.circlepath") }
+        }
+        .frame(width: 640, height: 480)
+    }
+
+    // MARK: - Account
+
+    private var accountTab: some View {
         Form {
-            Section("通用") {
-                Toggle("启动时检查更新", isOn: .constant(true))
+            Section {
+                if appState.auth.isLoggedIn, let account = appState.auth.account {
+                    HStack {
+                        AsyncImage(url: account.avatarURL) { phase in
+                            switch phase {
+                            case .success(let img):
+                                img.resizable().aspectRatio(contentMode: .fill)
+                            default:
+                                ZStack {
+                                    Color.secondary.opacity(0.15)
+                                    Image(systemName: "person.fill").foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .frame(width: 56, height: 56)
+                        .clipShape(Circle())
+                        VStack(alignment: .leading) {
+                            Text(account.nickname).font(.title3)
+                            Text(account.vipType >= 1 ? (account.vipType >= 11 ? "SVIP" : "VIP") : "普通用户")
+                                .foregroundStyle(.secondary)
+                                .font(.caption)
+                        }
+                    }
+                    Button(role: .destructive) {
+                        Task { await appState.auth.logout() }
+                    } label: {
+                        Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
+                    }
+                } else {
+                    Text("未登录").foregroundStyle(.secondary)
+                    HStack {
+                        Button("扫码登录") {
+                            showAccount = true
+                            Task { await appState.auth.startQRLogin() }
+                        }
+                        Button("导入 Cookie…") {
+                            showPasteCookieSheet = true
+                        }
+                    }
+                }
+            } header: { Text("账号") }
+            if case .waitingForScan = appState.auth.qrState {
+                Section {
+                    if let url = appState.auth.qrImageURL {
+                        QRCodeView(content: url.absoluteString)
+                            .frame(width: 180, height: 180)
+                            .padding(.vertical, 6)
+                    }
+                    Text(appState.auth.qrState.displayName)
+                        .foregroundStyle(.secondary)
+                } header: { Text("扫码") }
+            } else if case .waitingForConfirm = appState.auth.qrState {
+                Section {
+                    Text(appState.auth.qrState.displayName)
+                        .foregroundStyle(.secondary)
+                } header: { Text("已扫码") }
+            } else if case .failed(let message) = appState.auth.qrState {
+                Section {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                    Button("重新扫码") {
+                        Task { await appState.auth.startQRLogin() }
+                    }
+                } header: { Text("登录失败") }
             }
         }
+        .formStyle(.grouped)
+        .sheet(isPresented: $showPasteCookieSheet) {
+            pasteCookieSheet
+        }
         .padding()
+    }
+
+    @State private var showPasteCookieSheet: Bool = false
+    @State private var pasteCookieText: String = ""
+
+    private var pasteCookieSheet: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("粘贴 Cookie")
+                .font(.headline)
+            Text("粘贴形如 MUSIC_U=xxxxxx 的 cookie 字符串，或整段浏览器 cookie。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextEditor(text: $pasteCookieText)
+                .frame(minHeight: 120)
+                .font(.system(.body, design: .monospaced))
+            HStack {
+                Spacer()
+                Button("取消") { showPasteCookieSheet = false }
+                Button("登录") {
+                    Task {
+                        await appState.auth.loginWithCookieString(pasteCookieText)
+                        showPasteCookieSheet = false
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(pasteCookieText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+    }
+
+    // MARK: - General
+
+    private var generalTab: some View {
+        Form {
+            Section("语言") {
+                Picker("界面语言", selection: $appState.settings.language) {
+                    ForEach(AppLanguage.allCases) { l in
+                        Text(l.displayName).tag(l)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+            Section("日志与诊断") {
+                Button("打开配置目录") {
+                    let url = (try? FileManager.default.url(
+                        for: .applicationSupportDirectory,
+                        in: .userDomainMask,
+                        appropriateFor: nil,
+                        create: false
+                    ).appendingPathComponent("NeteaseMusicDownloader")) ?? URL(fileURLWithPath: NSHomeDirectory())
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    // MARK: - Download
+
+    private var downloadTab: some View {
+        Form {
+            Section("下载目录") {
+                HStack {
+                    Text(appState.settings.defaultDownloadDirectory.path)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("选择…") {
+                        let panel = NSOpenPanel()
+                        panel.canChooseDirectories = true
+                        panel.canChooseFiles = false
+                        panel.prompt = "选择"
+                        if panel.runModal() == .OK, let url = panel.url {
+                            appState.settings.defaultDownloadDirectory = url
+                        }
+                    }
+                }
+            }
+            Section("音质") {
+                Picker("默认音质", selection: $appState.settings.defaultQuality) {
+                    ForEach(AudioQuality.allCases) { q in
+                        Text(q.displayName).tag(q)
+                    }
+                }
+            }
+            Section("并发与行为") {
+                Stepper(value: $appState.settings.concurrentDownloads, in: 1...3) {
+                    Text("同时下载数：\(appState.settings.concurrentDownloads)")
+                }
+                Toggle("覆盖已存在的文件", isOn: $appState.settings.overwriteExisting)
+                Toggle("同时下载歌词（.lrc）", isOn: $appState.settings.downloadLyrics)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    // MARK: - Playback
+
+    private var playbackTab: some View {
+        Form {
+            Section("播放源") {
+                Toggle("优先播放本地版本", isOn: $appState.settings.preferredLocalPlay)
+                Text("开启后，列表里与本地匹配（同曲名同歌手）的歌曲优先用本地文件。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("质量与统计") {
+                Picker("在线音质", selection: $appState.settings.defaultQuality) {
+                    ForEach(AudioQuality.allCases) { q in
+                        Text(q.displayName).tag(q)
+                    }
+                }
+                Toggle("上报播放次数到云端", isOn: $appState.settings.reportPlayCountToCloud)
+                Button(role: .destructive) {
+                    appState.settings.clearPlayCounts()
+                } label: {
+                    Label("清空本地播放次数", systemImage: "trash")
+                }
+            }
+            Section("模式") {
+                Picker("默认播放模式", selection: Binding(
+                    get: { appState.player.mode },
+                    set: { appState.player.setMode($0) }
+                )) {
+                    ForEach(PlayMode.allCases) { m in
+                        Label(m.displayName, systemImage: m.systemImage).tag(m)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    // MARK: - Appearance
+
+    private var appearanceTab: some View {
+        Form {
+            Section("主题") {
+                Picker("主题", selection: $appState.settings.theme) {
+                    ForEach(AppTheme.allCases) { t in
+                        Text(t.displayName).tag(t)
+                    }
+                }
+                .pickerStyle(.segmented)
+                Toggle("启用液态玻璃效果", isOn: $appState.settings.liquidGlassEnabled)
+                Text("关闭后可降低毛玻璃对 GPU 的占用，老设备更顺畅。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    // MARK: - Update
+
+    private var updateTab: some View {
+        Form {
+            Section("自动更新") {
+                Toggle("启动后检查新版本", isOn: $appState.settings.autoCheckUpdates)
+                Picker("更新通道", selection: $appState.settings.updateChannel) {
+                    ForEach(UpdateChannel.allCases) { c in
+                        Text(c.displayName).tag(c)
+                    }
+                }
+                .pickerStyle(.menu)
+                Button {
+                    appState.updater.check()
+                } label: {
+                    if appState.updater.isChecking {
+                        ProgressView().controlSize(.small)
+                        Text("检查中…")
+                    } else {
+                        Label("立即检查更新", systemImage: "arrow.clockwise")
+                    }
+                }
+                .disabled(appState.updater.isChecking)
+            }
+            Section("当前与最新") {
+                LabeledContent("当前版本", value: UpdateService.currentVersion)
+                if let latest = appState.updater.latest {
+                    LabeledContent("最新版本", value: latest.version)
+                    LabeledContent("发布时间", value: latest.publishedAt.formatted(date: .abbreviated, time: .omitted))
+                    if !latest.body.isEmpty {
+                        DisclosureGroup("更新日志") {
+                            Text(latest.body).font(.caption)
+                        }
+                    }
+                    if appState.updater.updateAvailable {
+                        Button {
+                            appState.updater.openReleasePage()
+                        } label: {
+                            Label("打开下载页", systemImage: "safari")
+                        }
+                        .buttonStyle(.borderedProminent)
+                    } else {
+                        Label("已是最新版本", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                } else {
+                    Text("尚未检查更新").foregroundStyle(.secondary)
+                }
+                if let err = appState.updater.lastError {
+                    Label(err, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                }
+                if let last = appState.updater.lastChecked {
+                    LabeledContent("上次检查", value: last.formatted(date: .abbreviated, time: .shortened))
+                }
+            }
+            Section("如何安装") {
+                Text("macOS 上未签名包首次打开请右键 → 打开，或在终端执行：")
+                    .font(.caption)
+                Text("xattr -dr com.apple.quarantine /Applications/NeteaseMusicDownloader.app")
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+}
+
+/// 二维码渲染（用 CoreImage 把字符串渲染成 PNG；尺寸可控）。
+struct QRCodeView: View {
+    let content: String
+    var body: some View {
+        if let img = generate() {
+            Image(nsImage: img)
+                .resizable()
+                .interpolation(.none)
+                .aspectRatio(1, contentMode: .fit)
+        } else {
+            Color.secondary.opacity(0.1)
+        }
+    }
+
+    private func generate() -> NSImage? {
+        guard let data = content.data(using: .utf8),
+              let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
+        filter.setValue(data, forKey: "inputMessage")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
+        guard let output = filter.outputImage else { return nil }
+        let scaled = output.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
+        let context = CIContext()
+        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return nil }
+        return NSImage(cgImage: cgImage, size: NSSize(width: scaled.extent.width, height: scaled.extent.height))
     }
 }
