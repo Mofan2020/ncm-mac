@@ -2,6 +2,9 @@ import Foundation
 
 /// 网易云音乐 eapi 客户端。
 /// 对应 ncm/src/core/api.py 的完整 Swift 复刻。
+///
+/// 所有 eapi 请求的 payload 必须是 ``OrderedDict`` 以保留字段插入顺序——
+/// 网易云服务端按 JSON 字符串做 md5 签名，字段顺序参与计算。
 @MainActor
 final class NeteaseAPI {
     // MARK: - Endpoints
@@ -65,7 +68,7 @@ final class NeteaseAPI {
     }
 
     @discardableResult
-    func eapi(path: String, payload: [String: Any]) async throws -> Data {
+    func eapi(path: String, payload: OrderedDict) async throws -> Data {
         let body = try CryptoService.eapiBody(
             path: path,
             data: payload,
@@ -76,6 +79,9 @@ final class NeteaseAPI {
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
         request.setValue("https://music.163.com/", forHTTPHeaderField: "Referer")
+        // 显式声明只接受 gzip/deflate；网易云默认会回 brotli，而 URLSession 默认不解 brotli，
+        // 不限制就会拿到压缩字节流 → JSON 解析失败。
+        request.setValue("gzip, deflate", forHTTPHeaderField: "Accept-Encoding")
         if let cookie {
             request.setValue(cookie, forHTTPHeaderField: "Cookie")
         }
@@ -116,7 +122,7 @@ final class NeteaseAPI {
     func fetchPlaylistDetail(id: Int64) async throws -> Playlist {
         let data = try await eapi(
             path: "/api/v6/playlist/detail",
-            payload: ["id": id]
+            payload: [("id", AnyValue.int(id))]
         )
         let json = try parseResponse(data)
         guard let playlist = json["playlist"] as? [String: Any] else {
@@ -149,7 +155,7 @@ final class NeteaseAPI {
             let c = chunk.map(String.init).joined(separator: ",")
             let data = try await eapi(
                 path: "/api/v3/song/detail",
-                payload: ["c": "[\(c)]"]
+                payload: [("c", .string("[\(c)]"))]
             )
             let json = try parseResponse(data)
             guard let songs = json["songs"] as? [[String: Any]] else {
@@ -165,10 +171,10 @@ final class NeteaseAPI {
     func fetchSongURL(songId: Int64, quality: AudioQuality) async throws -> SongURL? {
         let chain = quality.fallbackChain
         for q in chain {
-            let payload: [String: Any] = [
-                "ids": [songId],
-                "br": Self.bitrate(for: q),
-                "encodeType": q.encodeType,
+            let payload: OrderedDict = [
+                ("ids", .array([.int(songId)])),
+                ("br", .int(Int64(Self.bitrate(for: q)))),
+                ("encodeType", .string(q.encodeType)),
             ]
             let data = try await eapi(
                 path: "/api/song/enhance/player/url/v1",
@@ -192,7 +198,7 @@ final class NeteaseAPI {
     func fetchLyrics(songId: Int64) async throws -> SongLyrics {
         let data = try await eapi(
             path: "/api/song/lyric",
-            payload: ["id": songId]
+            payload: [("id", AnyValue.int(songId))]
         )
         let json = try parseResponse(data)
         let lrcString = (json["lrc"] as? [String: Any])?["lyric"] as? String ?? ""
@@ -218,10 +224,10 @@ final class NeteaseAPI {
         let data = try await eapi(
             path: Self.searchEndpoint,
             payload: [
-                "s": trimmed,
-                "type": 1,
-                "limit": limit,
-                "offset": offset,
+                ("s", .string(trimmed)),
+                ("type", .int(Int64(1))),
+                ("limit", .int(Int64(limit))),
+                ("offset", .int(Int64(offset))),
             ]
         )
         let json = try parseResponse(data)
@@ -236,7 +242,7 @@ final class NeteaseAPI {
         guard !keyword.isEmpty else { return [] }
         let data = try await eapi(
             path: Self.searchSuggestEndpoint,
-            payload: ["s": keyword, "type": "mobile"]
+            payload: [("s", .string(keyword)), ("type", .string("mobile"))]
         )
         let json = try parseResponse(data)
         guard let result = json["result"] as? [String: Any],
@@ -256,9 +262,9 @@ final class NeteaseAPI {
             let data = try await eapi(
                 path: Self.userPlaylistEndpoint,
                 payload: [
-                    "uid": userId,
-                    "limit": limit,
-                    "offset": offset,
+                    ("uid", .int(userId)),
+                    ("limit", .int(Int64(limit))),
+                    ("offset", .int(Int64(offset))),
                 ]
             )
             let json = try parseResponse(data)
@@ -278,10 +284,10 @@ final class NeteaseAPI {
         let data = try await eapi(
             path: Self.likeEndpoint,
             payload: [
-                "alg": "itembased_alg",
-                "trackId": songId,
-                "like": like,
-                "time": 3,
+                ("alg", .string("itembased_alg")),
+                ("trackId", .int(songId)),
+                ("like", .bool(like)),
+                ("time", .int(3)),
             ]
         )
         _ = try parseResponse(data)
@@ -290,7 +296,7 @@ final class NeteaseAPI {
     func fetchLikedSongIds(userId: Int64) async throws -> Set<Int64> {
         let data = try await eapi(
             path: Self.likeListEndpoint,
-            payload: ["uid": userId]
+            payload: [("uid", .int(userId))]
         )
         let json = try parseResponse(data)
         let ids = (json["ids"] as? [Int64]) ?? []
@@ -303,7 +309,7 @@ final class NeteaseAPI {
         guard cookie != nil else { return nil }
         let data = try await eapi(
             path: "/api/w/nuser/account/get",
-            payload: [:]
+            payload: []
         )
         let json = try parseResponse(data)
         guard let profile = json["profile"] as? [String: Any] else {
@@ -322,18 +328,18 @@ final class NeteaseAPI {
     // MARK: - WeBlog
 
     func reportPlay(songId: Int64, action: String, duration: Int, source: String = "list") async throws {
-        let now = Int(Date().timeIntervalSince1970 * 1000)
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
         let data = try await eapi(
             path: Self.weblogEndpoint,
             payload: [
-                "action": action,
-                "json": [
-                    "id": songId,
-                    "type": "song",
-                    "time": now,
-                    "source": source,
-                    "duration": duration,
-                ] as [String: Any],
+                ("action", .string(action)),
+                ("json", .ordered([
+                    ("id", .int(songId)),
+                    ("type", .string("song")),
+                    ("time", .int(now)),
+                    ("source", .string(source)),
+                    ("duration", .int(Int64(duration))),
+                ])),
             ]
         )
         _ = try parseResponse(data)
@@ -345,6 +351,7 @@ final class NeteaseAPI {
         var request = URLRequest(url: URL(string: "\(Self.legacyHost)/api/login/qrcode/unikey")!)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue("gzip, deflate", forHTTPHeaderField: "Accept-Encoding")
         request.httpBody = Data("type=1".utf8)
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
@@ -361,6 +368,7 @@ final class NeteaseAPI {
         var request = URLRequest(url: URL(string: "\(Self.legacyHost)/api/login/qrcode/client/login")!)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue("gzip, deflate", forHTTPHeaderField: "Accept-Encoding")
         let body = "type=1&key=\(unikey.urlEncoded)"
         request.httpBody = Data(body.utf8)
         let (data, response) = try await session.data(for: request)

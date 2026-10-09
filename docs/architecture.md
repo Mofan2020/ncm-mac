@@ -43,11 +43,16 @@ params  = HEX_UPPER(AES-128-ECB-PKCS7(message, key="e82ckenh8dichen8"))
 
 Swift 端：
 
-- JSON 序列化：Foundation 的 `JSONSerialization` 默认会在 `","` 和 `":"` 旁加空格，与 `json.dumps(separators=(",", ":"))` 不一致。`compactJSON()` 用一次序列化再去空格；`JSONValue.normalize()` 同步把字典按 key 排序（与 Python 一致）。
+- JSON 序列化：Swift 的 `[String: Any]` 是无序哈希表，**无法保留插入顺序**。而网易云服务端按 JSON 字节流做 md5 签名，字段顺序参与计算——所以本模块引入 `OrderedDict = [(String, AnyValue)]` 类型，强制调用方按顺序构造 payload。
+- `JEncoder`（在 `CryptoService.swift` 里）是一个手写的紧凑 JSON 编码器，行为对齐 Python `json.dumps(separators=(",", ":"), ensure_ascii=False)`：无空格、保留插入顺序、字符串不做 Unicode 转义、字典整数 key 不被转为 Double。
 - AES-128-ECB-PKCS7：CryptoKit 不暴露 ECB；走 CommonCrypto `CCCrypt(kCCOptionECBMode|kCCOptionPKCS7Padding, ...)`。CommonCrypto macOS 自带，无第三方依赖。
 - MD5：`CryptoKit.Insecure.MD5`，hex 小写。
 
-参数签名顺序（path → JSON → md5）与 Python 完全对齐；多次实拉歌单 URL/账户信息验证。
+参数签名顺序（path → JSON → md5）与 Python 完全对齐；用 `scripts/gen_test_vectors.py` + 独立 Swift 校验器做 byte-level 校验（不依赖真实网络）。
+
+## 响应解压
+
+所有 `eapi/*` 请求都加 `Accept-Encoding: gzip, deflate`（显式不含 `br`）——网易云默认会回 brotli，而 `URLSession` 默认不解 brotli，会拿到压缩字节流导致 JSON 解析失败。QR 接口（`qrKey` / `qrPoll`）同样处理。
 
 ## 播放 vs ncm 的回环 HTTP
 

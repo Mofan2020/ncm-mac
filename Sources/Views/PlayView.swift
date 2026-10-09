@@ -247,6 +247,12 @@ struct PlayView: View {
         case .recent:
             displayedSongs = []
         }
+
+        // 启动恢复：把当前 source 的候选歌单喂给 player.tryRestoreQueue
+        // 让 player 用 id 匹配 pending 队列。内部用 clearPendingResume 保证只生效一次。
+        if !displayedSongs.isEmpty {
+            appState.player.tryRestoreQueue(from: displayedSongs)
+        }
     }
 
     private func runSearch() async {

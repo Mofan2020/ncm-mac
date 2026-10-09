@@ -21,12 +21,14 @@ ncm 的 `src/core/{crypto,api,downloader,library,lyrics,localmusic}.py` 是 ncm-
 - **没有后台进程 / 菜单栏应用**：只做菜单栏 app 入口；Music.app 接管 Now Playing 留作未来。
 - **没有 Live2D**：ncm 也明确不支持，cubism SDK 法律约束。
 - **avfoundation 没有真正写 NowPlaying 到 macOS Music.app 的 `MPNowPlayingInfoCenter`**：当前只暴露 `currentSong` 给 UI；播放控制走菜单栏 `播放` 子菜单。未来要补 `MPNowPlayingInfoCenter.default().nowPlayingInfo`。
-- **测试**：仓库不带 XCTest target。冒烟测试靠 `xcodebuild build` + GitHub Actions self-test（启动 4s 后 kill）+ 本地手动验收。
+- **测试**：仓库不带 XCTest target。eapi 签名 byte-level 校验靠 `scripts/gen_test_vectors.py` + 独立 Swift 校验器（不依赖真实网络）；UI 冒烟靠 `xcodebuild build` + GitHub Actions self-test（启动 4s 后 kill）+ 本地手动验收。
 
 ## 坑点
 
 - **AES-128-ECB**：Swift CryptoKit 不暴露 ECB 模式，只能 CommonCrypto `CCCrypt`。CommonCrypto 是 macOS 自带的，不要去 `import` 它也**不要**给二进制链接（系统已暴露）。
-- **JSON 序列化默认带空格**：Foundation 的 `JSONSerialization` 输出 `", "` `": "`；与 Python `json.dumps(separators=(",",":"))` 不一致，必须手工 normalize。`CryptoService.compactJSON()` 处理这件事。
+- **JSON 字段顺序是有签名的**：网易云服务端按 JSON 字节流做 md5，字段顺序参与计算。Swift 的 `[String: Any]` 是无序哈希表，直接用它做 payload 会导致签名对不上 → 必须用 `OrderedDict = [(String, AnyValue)]`（CryptoService 定义），强制调用方按顺序构造。`JEncoder` 手写紧凑 JSON 输出，行为对齐 Python `json.dumps(separators=(",", ":"), ensure_ascii=False)`。
+- **JSONEncoder 不能保持 dict 顺序**：`JSONEncoder` 内部用 `OrderedKeyedEncodingContainer`，输出时按键排序。`JEncoder` 走的是手写路径绕过这个限制，不要回退到 JSONEncoder。
+- **brotli 解压**：网易云 `eapi/*` 响应默认 Content-Encoding: br，但 `URLSession` 默认不解 brotli（结果是把 br 字节流塞给 `JSONSerialization` 报 "Garbage at end"）。每个发往网易云的 request 都显式 `Accept-Encoding: gzip, deflate`（不含 br）让服务端改用 gzip，URLSession 默认会处理。NeteaseAPI 的 `eapi` / `qrKey` / `qrPoll` 三处都要加。
 - **`@Published` + `Binding` + `let`**：AppState 把 `settings` 暴露为 `var` 后，绑定才能写。SwiftUI Binding 的 setter 在 view body 里要 `$appState.settings.xxx`，不是 `$settings.xxx`。
 - **`NavigationSplitView` 里的 `if let ... ? ... : ...` 三元表达式**必须包 `Group { ... }`，否则编译器在 view builder 上下文里推不出类型。
 - **`onChange` 在 macOS 14+ 是 `(of: value) -> Void` 单参数 closure**，老 API 形式不再用。

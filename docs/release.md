@@ -54,7 +54,8 @@ NeteaseMusicDownloader-macOS-x64.zip
 发版前本地必须：
 
 1. `xcodegen generate && xcodebuild ... -configuration Debug build` 通过
-2. 真实启动一次：登录 → 拉一个公开歌单 → 选一首歌下载 → 播 → 看歌词
-3. `Settings → Update → Check` 触发一次 Release 检查（确认 GitHub token / 网络可达）
+2. eapi 签名 byte-level 校验：`/opt/anaconda3/envs/xijianBase/bin/python scripts/gen_test_vectors.py` 生成向量，再用独立 Swift 校验器（参考 `/tmp/ncm-mac-test/verify_crypto.swift`）跑断言；当前应有 10/10 通过
+3. 真实启动一次：登录 → 拉一个公开歌单 → 选一首歌下载 → 播 → 看歌词
+4. `Settings → Update → Check` 触发一次 Release 检查（确认 GitHub token / 网络可达）
 
 CI 也会跑一次冒烟（启动 4s 后 kill），但正式版本产物需要在本地实跑确认 eapi 加密与播放 URL 能命中（CI 不知道用户的 Cookie）。

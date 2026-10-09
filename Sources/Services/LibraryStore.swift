@@ -66,8 +66,8 @@ final class LibraryStore: ObservableObject {
         let data = try await api.eapi(
             path: NeteaseAPI.playlistCreate,
             payload: [
-                "name": name,
-                "privacy": isPrivate ? 10 : 0,
+                ("name", .string(name)),
+                ("privacy", .int(Int64(isPrivate ? 10 : 0))),
             ]
         )
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
@@ -82,7 +82,7 @@ final class LibraryStore: ObservableObject {
     func deletePlaylist(id: Int64) async throws {
         let data = try await api.eapi(
             path: NeteaseAPI.playlistDelete,
-            payload: ["id": id]
+            payload: [("id", .int(id))]
         )
         _ = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
         refreshAccountPlaylists()
@@ -93,8 +93,8 @@ final class LibraryStore: ObservableObject {
         let data = try await api.eapi(
             path: NeteaseAPI.playlistSubscribe,
             payload: [
-                "id": playlistId,
-                "t": subscribe ? 1 : 2,
+                ("id", .int(playlistId)),
+                ("t", .int(Int64(subscribe ? 1 : 2))),
             ]
         )
         _ = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
@@ -106,8 +106,8 @@ final class LibraryStore: ObservableObject {
         let data = try await api.eapi(
             path: NeteaseAPI.playlistTracksAdd,
             payload: [
-                "pid": playlistId,
-                "trackIds": trackIds.map { String($0) }.joined(separator: ","),
+                ("pid", .int(playlistId)),
+                ("trackIds", .string(trackIds.map { String($0) }.joined(separator: ","))),
             ]
         )
         _ = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
@@ -118,8 +118,8 @@ final class LibraryStore: ObservableObject {
         let data = try await api.eapi(
             path: NeteaseAPI.playlistTracksDel,
             payload: [
-                "pid": playlistId,
-                "trackIds": trackIds.map { String($0) }.joined(separator: ","),
+                ("pid", .int(playlistId)),
+                ("trackIds", .string(trackIds.map { String($0) }.joined(separator: ","))),
             ]
         )
         _ = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
