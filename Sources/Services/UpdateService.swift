@@ -86,7 +86,21 @@ final class UpdateService: ObservableObject {
             throw UpdateError.http((response as? HTTPURLResponse)?.statusCode ?? -1)
         }
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        // GitHub API 字段是 snake_case（tag_name / html_url / published_at 等），
+        // Swift Codable 不会自动转 camelCase。必须显式声明策略。
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        // published_at 形如 2024-01-15T12:34:56Z；带 fractional seconds 也要兼容。
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let isoNoFractional = ISO8601DateFormatter()
+        isoNoFractional.formatOptions = [.withInternetDateTime]
+        decoder.dateDecodingStrategy = .custom { dec in
+            let str = try dec.singleValueContainer().decode(String.self)
+            if let d = isoFormatter.date(from: str) { return d }
+            if let d = isoNoFractional.date(from: str) { return d }
+            throw DecodingError.dataCorruptedError(in: try dec.singleValueContainer(),
+                                                   debugDescription: "Bad ISO8601 date: \(str)")
+        }
         return try decoder.decode([ReleaseInfo].self, from: raw)
     }
 

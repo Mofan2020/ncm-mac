@@ -5,22 +5,33 @@ import Combine
 /// 设置页：账号 / 通用 / 下载 / 播放 / 外观 / 更新。
 struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
-    @State private var showAccount: Bool = false
+    @State private var selectedTab: SettingsTab = .account
+
+    enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
+        case account, general, download, playback, appearance, update
+        var id: String { rawValue }
+    }
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             accountTab
                 .tabItem { Label("账号", systemImage: "person.crop.circle") }
+                .tag(SettingsTab.account)
             generalTab
                 .tabItem { Label("通用", systemImage: "gearshape") }
+                .tag(SettingsTab.general)
             downloadTab
                 .tabItem { Label("下载", systemImage: "arrow.down.circle") }
+                .tag(SettingsTab.download)
             playbackTab
                 .tabItem { Label("播放", systemImage: "play.circle") }
+                .tag(SettingsTab.playback)
             appearanceTab
                 .tabItem { Label("外观", systemImage: "paintbrush") }
+                .tag(SettingsTab.appearance)
             updateTab
                 .tabItem { Label("更新", systemImage: "arrow.triangle.2.circlepath") }
+                .tag(SettingsTab.update)
         }
         .frame(width: 640, height: 480)
     }
@@ -61,7 +72,6 @@ struct SettingsView: View {
                     Text("未登录").foregroundStyle(.secondary)
                     HStack {
                         Button("扫码登录") {
-                            showAccount = true
                             Task { await appState.auth.startQRLogin() }
                         }
                         Button("导入 Cookie…") {
@@ -155,9 +165,58 @@ struct SettingsView: View {
                     NSWorkspace.shared.open(url)
                 }
             }
+            Section("维护") {
+                Button(role: .destructive) {
+                    forceRefresh()
+                } label: {
+                    Label("强制刷新全部缓存", systemImage: "arrow.clockwise.circle.fill")
+                }
+                .help("清空本地音乐索引、账号会话缓存和 .part 下载临时文件，\n下次启动会重新扫描本地音乐并从服务器重新拉取歌单/账号信息。\n不会删除已下载的歌曲、歌词和你的偏好设置。")
+                if let done = lastForceRefreshMessage {
+                    Text(done).font(.caption).foregroundStyle(.secondary)
+                }
+            }
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    @State private var lastForceRefreshMessage: String?
+
+    private func forceRefresh() {
+        // 1) 清本地音乐扫描索引（下次访问"本地"页会全量重扫）
+        // 2) 清账号会话 + Cookie（不删 deviceId；eapi 签名靠它）
+        // 3) 清未完成的 .part 临时文件
+        // 4) 触发 library 重新拉账号歌单（不重新登录；只刷服务端数据）
+        let appSupport = (try? FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask,
+            appropriateFor: nil, create: false
+        ).appendingPathComponent("NeteaseMusicDownloader", isDirectory: true)) ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        var cleared: [String] = []
+        var skipped: [String] = []
+
+        // local-index.json
+        let indexURL = appSupport.appendingPathComponent("local-index.json")
+        if FileManager.default.fileExists(atPath: indexURL.path) {
+            do { try FileManager.default.removeItem(at: indexURL); cleared.append("本地音乐索引") }
+            catch { skipped.append("本地音乐索引（\(error.localizedDescription)）") }
+        }
+        // 未完成 .part 临时文件
+        let downloads = appState.settings.defaultDownloadDirectory
+        if let entries = try? FileManager.default.contentsOfDirectory(at: downloads, includingPropertiesForKeys: nil) {
+            let parts = entries.filter { $0.pathExtension == "part" }
+            for p in parts {
+                try? FileManager.default.removeItem(at: p)
+            }
+            if !parts.isEmpty { cleared.append("\(parts.count) 个 .part 临时文件") }
+        }
+        // 退出登录（不删本地已下载文件、不删 deviceId）
+        Task {
+            await appState.auth.logout()
+            await MainActor.run {
+                lastForceRefreshMessage = "已清空：\(cleared.joined(separator: "、"))。请重新登录以从服务器拉取账号信息。"
+            }
+        }
     }
 
     // MARK: - Download
@@ -286,10 +345,11 @@ struct SettingsView: View {
                 LabeledContent("当前版本", value: UpdateService.currentVersion)
                 if let latest = appState.updater.latest {
                     LabeledContent("最新版本", value: latest.version)
+                    LabeledContent("最新版本名", value: latest.name ?? latest.tagName)
                     LabeledContent("发布时间", value: latest.publishedAt.formatted(date: .abbreviated, time: .omitted))
-                    if !latest.body.isEmpty {
+                    if let body = latest.body, !body.isEmpty {
                         DisclosureGroup("更新日志") {
-                            Text(latest.body).font(.caption)
+                            Text(body).font(.caption)
                         }
                     }
                     if appState.updater.updateAvailable {

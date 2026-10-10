@@ -77,6 +77,14 @@ final class AppState: ObservableObject {
                 self?.objectWillChange.send()
             }
             .store(in: &cancellables)
+        // 同样转发 player：SettingsView 的"默认播放模式" Picker 读 appState.player.mode，
+        // 不转发则 Picker 显示旧值。
+        player.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
         // 启动后若开启自动更新，5s 后静默检查一次
         if settings.autoCheckUpdates {
             Task { [weak updater] in

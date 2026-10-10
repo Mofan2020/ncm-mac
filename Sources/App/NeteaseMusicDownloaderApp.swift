@@ -13,9 +13,12 @@ struct NeteaseMusicDownloaderApp: App {
                 .frame(minWidth: 780, minHeight: 560)
                 // 把 settings 里的 theme / language / liquidGlass 投射到 SwiftUI 环境上。
                 // 视图层读 appState.settings.foo 即可，但视觉/语言/材质的应用必须在根上挂。
+                // language 用 .id() 强制重建 window 内容（SwiftUI .environment(\.locale) 改了
+                // 不会自动重新本地化已渲染的 view tree，要靠 id 触发整树重渲染）。
                 .modifier(ThemingModifier(theme: appState.settings.theme))
                 .modifier(LocaleModifier(language: appState.settings.language))
                 .modifier(MaterialModifier(enabled: appState.settings.liquidGlassEnabled))
+                .id("lang-\(appState.settings.language.rawValue)")
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)

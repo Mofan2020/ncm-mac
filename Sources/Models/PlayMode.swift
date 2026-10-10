@@ -47,8 +47,11 @@ struct LocalTrack: Identifiable, Hashable {
 /// GitHub Release 信息（用于自动更新检查）。
 struct ReleaseInfo: Codable, Hashable {
     let tagName: String
-    let name: String
-    let body: String
+    /// GitHub Release 的 name 字段可能为 null（特别是用 API 自动化发版时），
+    /// 解析必须容忍；用 tagName 作为显示 fallback。
+    let name: String?
+    /// Release body 也可能为空（draft release），保持 optional 更稳。
+    let body: String?
     let htmlURL: URL
     let publishedAt: Date
     let assets: [ReleaseAsset]
