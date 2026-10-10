@@ -29,12 +29,23 @@ ncm 的 `src/core/{crypto,api,downloader,library,lyrics,localmusic}.py` 是 ncm-
 - **JSON 字段顺序是有签名的**：网易云服务端按 JSON 字节流做 md5，字段顺序参与计算。Swift 的 `[String: Any]` 是无序哈希表，直接用它做 payload 会导致签名对不上 → 必须用 `OrderedDict = [(String, AnyValue)]`（CryptoService 定义），强制调用方按顺序构造。`JEncoder` 手写紧凑 JSON 输出，行为对齐 Python `json.dumps(separators=(",", ":"), ensure_ascii=False)`。
 - **JSONEncoder 不能保持 dict 顺序**：`JSONEncoder` 内部用 `OrderedKeyedEncodingContainer`，输出时按键排序。`JEncoder` 走的是手写路径绕过这个限制，不要回退到 JSONEncoder。
 - **brotli 解压**：网易云 `eapi/*` 响应默认 Content-Encoding: br，但 `URLSession` 默认不解 brotli（结果是把 br 字节流塞给 `JSONSerialization` 报 "Garbage at end"）。每个发往网易云的 request 都显式 `Accept-Encoding: gzip, deflate`（不含 br）让服务端改用 gzip，URLSession 默认会处理。NeteaseAPI 的 `eapi` / `qrKey` / `qrPoll` 三处都要加。
+- **qrKey 必须 GET 不是 POST**：网易云 legacy 接口 `/api/login/qrcode/unikey` 用 GET + query string + timestamp；POST form body 服务端会拒。不需要 eapi 加密，但需要 `os/appver/channel` 身份 Cookie + 浏览器风格 User-Agent（"PC 客户端"身份才能拿到 session cookie）。
+- **qrPoll 走 eapi 不是 plain POST**：状态轮询 `/api/login/qrcode/client/login` 走 eapi 通道；plain POST 服务端拒。响应里 `code` / `cookie` 可能嵌套在 `data.*` 下，解析要做 nested fallback。
 - **`@Published` + `Binding` + `let`**：AppState 把 `settings` 暴露为 `var` 后，绑定才能写。SwiftUI Binding 的 setter 在 view body 里要 `$appState.settings.xxx`，不是 `$settings.xxx`。
+- **`@EnvironmentObject` 子 ObservableObject 变更不重渲染**：`appState.player.mode` 这种 `.subObject.field` 访问，SwiftUI 不订阅子 ObservableObject，**写入正常但 body 不刷新**。修法：AppState.init 转发子服务的 `objectWillChange` 到 `self.objectWillChange`（settings、updater、player 等所有被视图读的子服务都要转发）。
+- **TabView 必须绑 selection**：不写 `TabView(selection: $...)` + `.tag(xxx)`，每次 body 重算（settings 任意字段变都可能触发）会回到第一个 tab。`@State` 死变量（如 `showAccount` 写后没读）也是隐患，留着只会让阅读者误解意图。
+- **`.environment(\.locale)` 改了不自动重新本地化**：SwiftUI 已知行为，locale 变了 view tree 不会自动重读字符串。修法：在 ContentView 根上加 `.id("lang-\(language.rawValue)")` 强制整树重建。
+- **SettingsView 的 `selectedTab` 不能用 `@State`**：当父视图 ContentView 因 `appState.objectWillChange`（settings 任意字段改都会触发）重算时，`switch appState.selectedTab { case .settings: SettingsView() }` 会**新建 SettingsView 实例**，实例内的 `@State` 重置回初始值。修法：把 binding 提到父视图 `@State private var settingsTab` 持有，传 `@Binding var selection: SettingsTab` 给 SettingsView。
+- **SwiftUI 国际化要走标准 i18n**：硬编码中文 string literal 不会被 `.environment(\.locale)` 自动翻译。必须用 `LocalizedStringKey`（如 `Text("settings.tab.account")`）或 `String(localized:)`，并在 bundle 里放 `Base.lproj/Localizable.strings` + `zh-Hans.lproj/Localizable.strings`。`project.yml` 要声明 `INFOPLIST_KEY_CFBundleLocalizations: ["en", "zh-Hans"]` bundle 才会加载。
+- **`convertFromSnakeCase` 不智能**：处理 `html_url` → `htmlUrl`（错，我们要 `htmlURL`）+ 不给 `prerelease` 加 `is` 前缀（错，我们要 `isPrerelease`）。遇 GitHub API 等 snake_case 第三方必须手动 `enum CodingKeys: String, CodingKey` 显式映射。
+- **JSONDecoder 不会自动 snake_case → camelCase**：GitHub API 字段是 `tag_name` / `html_url` / `prerelease`，Swift Codable 默认 `keyDecodingStrategy = .useDefaultKeys` 直接 keyNotFound → "data couldn't be read"。**不要**用 `.convertFromSnakeCase`（处理不了 `URL` 缩写和 `is` 前缀），必须手动 `enum CodingKeys: String, CodingKey` 显式映射。
+- **ISO8601 日期可能带 fractional seconds**：`published_at = "2024-01-15T12:34:56.789Z"` 时 `JSONDecoder.dateDecodingStrategy = .iso8601` 会抛。要自定义 strategy 先试 `withFractionalSeconds` 再 fallback `withInternetDateTime`。
 - **`NavigationSplitView` 里的 `if let ... ? ... : ...` 三元表达式**必须包 `Group { ... }`，否则编译器在 view builder 上下文里推不出类型。
 - **`onChange` 在 macOS 14+ 是 `(of: value) -> Void` 单参数 closure**，老 API 形式不再用。
 - **AVURLAsset 的 Referer/Cookie 注入**没有官方入口；如果 CDN 收紧校验，要切到 `AVAssetResourceLoader` 自实现。当前 eapi 返回的 URL 已带签名，校验是放行的，先这么跑。
 - **`URLSession` 默认 60s 超时对一首 30MB 歌曲够用**；4K 视频无损（如杜比）可能 30+ MB/首，128 KB/s 缓冲基本够。
 - **XCTest 没配**：Swift Package 单元测试在 macOS SwiftUI app 上配起来复杂，ncm 也没强依赖测试覆盖率；后续要加可单开 `ncm-mac-tests` SPM 仓库再 link。
+- **强制刷新按钮的清理范围**：清 `local-index.json`（本地音乐扫描索引）、下载目录下的 `.part` 临时文件、登出账号（清 Keychain session）。**保留** `settings.json`（用户偏好）、`playback.json`（续播+播放计数）、`ncm.deviceId`（eapi 签名靠它，换了会让服务端判异常）、已下载的歌曲和歌词。
 
 ## 同步到 ncm 时的差异
 

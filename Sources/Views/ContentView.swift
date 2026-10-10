@@ -4,6 +4,10 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var appState: AppState
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    // settings 子页面内的 tab 选择：必须由 ContentView 持有，不能放在 SettingsView 内的
+    // @State——否则当 settings.theme / .language 触发整树重算时，AppState.objectWillChange
+    // 会让 ContentView 重建子视图，新实例的 @State 重置回 .account。
+    @State private var settingsTab: SettingsView.SettingsTab = .account
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -47,7 +51,8 @@ struct ContentView: View {
             case .localMusic:
                 LocalMusicView()
             case .settings:
-                SettingsView()
+                // settingsTab binding 提到 ContentView，避免子视图重建时 @State 重置。
+                SettingsView(selection: $settingsTab)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

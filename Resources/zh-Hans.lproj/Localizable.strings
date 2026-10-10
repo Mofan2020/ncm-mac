@@ -1,0 +1,7 @@
+/* Settings tabs */
+"settings.tab.account" = "账号";
+"settings.tab.general" = "通用";
+"settings.tab.download" = "下载";
+"settings.tab.playback" = "播放";
+"settings.tab.appearance" = "外观";
+"settings.tab.update" = "更新";

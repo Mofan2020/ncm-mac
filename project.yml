@@ -43,6 +43,8 @@ targets:
         INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright 2026 Skyc8266"
         INFOPLIST_KEY_NSMainStoryboardFile: ""
         INFOPLIST_KEY_NSPrincipalClass: NSApplication
+        # i18n: 让 Info.plist 声明支持的语言，Localizable.lproj 才会被 bundle 加载
+        INFOPLIST_KEY_CFBundleLocalizations: ["en", "zh-Hans"]
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
 
 configs:

@@ -54,6 +54,20 @@ Swift 端：
 
 所有 `eapi/*` 请求都加 `Accept-Encoding: gzip, deflate`（显式不含 `br`）——网易云默认会回 brotli，而 `URLSession` 默认不解 brotli，会拿到压缩字节流导致 JSON 解析失败。QR 接口（`qrKey` / `qrPoll`）同样处理。
 
+## QR 登录
+
+`AuthService.startQRLogin()` 走两步：
+
+1. `NeteaseAPI.qrKey()` —— `GET /api/login/qrcode/unikey?type=1&timestamp=...`。
+   legacy 接口**不加密**，加 `User-Agent: Mozilla/5.0 ... Safari/16.6` 和
+   `Cookie: os=pc; appver=8.9.70; channel=netease` 身份头（不带这俩服务端
+   可能拒）。
+2. `NeteaseAPI.qrPoll(unikey:)` —— 走 eapi 通道 `POST /eapi/.../client/login`，
+   payload `{"key": unikey, "type": 1}`。响应里 `code` / `cookie` 可能嵌套
+   在 `data.*` 下，解析要做 nested fallback；`cookie` 也兼容 dict 形式。
+
+`NeteaseAPI.userAgent` / `clientCookieHeader` 是这两个头的单一来源（`static`）。
+
 ## 播放 vs ncm 的回环 HTTP
 
 ncm 的 `mediaserver.py` 是给 pywebview 准备的：pywebview 的 `file://` 同源策略不让 webview 直接读本地文件，所以起一个回环 HTTP 服务器代理授权过的 file/CDN 流。
@@ -96,11 +110,49 @@ Cover / 嵌入歌词在扫描时不读；播放时按需调用 `readCover(for:)`
 
 不引入 Sparkle / Squirrel；偏好不要外部依赖。
 
+JSON 解析细节（GitHub API 字段是 snake_case，Swift Codable 不会自动转 camelCase，必须显式声明）：
+
+- 不要用 `convertFromSnakeCase` —— 它对缩写（`html_url` → `htmlUrl` ≠ `htmlURL`）和 `isPrerelease`（GitHub 字段叫 `prerelease`，不会自动加 `is` 前缀）处理不了
+- 正确做法：手动写 `enum CodingKeys: String, CodingKey` 显式映射每个字段（`tag_name` ↔ `tagName`、`html_url` ↔ `htmlURL`、`prerelease` ↔ `isPrerelease` 等）
+- 自定义 `dateDecodingStrategy` 兼容带/不带 fractional seconds 的 ISO8601（`withInternetDateTime` + `withFractionalSeconds` 两套）
+- `ReleaseInfo.name` / `body` 声明为 `String?` —— GitHub API 对自动化发版的 release 这两个字段可能为 null；UI 层做 `??` fallback
+
+## SwiftUI 子 ObservableObject 转发
+
+`AppState` 把 `settings` / `updater` / `player` / `library` / `localMusic` 等子服务挂成属性（`var` 或 `let`）。**SwiftUI 视图对子 ObservableObject 不自动订阅**——`appState.player.mode` 变了，body 不重算。
+
+模式：AppState.init 把每个子服务的 `objectWillChange` 转发到 `self.objectWillChange`，订阅保存到 `cancellables`。子服务任何 `@Published` 字段变化都会冒泡，触发所有 `appState` 视图重渲染。
+
+```swift
+player.objectWillChange
+    .receive(on: RunLoop.main)
+    .sink { [weak self] _ in self?.objectWillChange.send() }
+    .store(in: &cancellables)
+```
+
+适用对象：所有被 SettingsView 等视图**读**子属性的服务（settings、updater、player、library、localMusic）。AuthService / DownloadManager / NeteaseAPI 主要被**写**操作调用、不在视图 body 里读，不一定要转发。
+
+## settings → SwiftUI 环境
+
+`SettingsView` 改 `settings.theme` / `language` / `liquidGlassEnabled` 后，要在 app 全局生效，必须在 WindowGroup 根 ContentView 上挂 modifier 把 settings 投射到 SwiftUI 环境：
+
+- `ThemingModifier` —— `preferredColorScheme(theme.colorScheme)`
+- `LocaleModifier` —— `.environment(\.locale, Locale(identifier: language.localeIdentifier))`
+- `MaterialModifier` —— `.background(.background)`（关液态玻璃时退回普通底）
+
+加上 `.id("lang-\(language.rawValue)")` —— SwiftUI 的 `.environment(\.locale)` 改了不会自动重新本地化已渲染的 view tree，靠 id 强制整树重建。
+
+## 窗口透明（macOS 26 NavigationSplitView）
+
+`WindowAccessor` 把 `NSWindow.backgroundColor = .clear` + `styleMask.insert(.fullSizeContentView)`——为了让 sidebar 的玻璃材质透出桌面色。**但** detail 区 SwiftUI 默认不画背景，文字直接画在透明上、字看不清。
+
+修法：ContentView 的 detail 块统一加 `.background(.regularMaterial)`，与 sidebar 视觉一致。一次性给 5 个 detail view（Download/Play/Library/LocalMusic/Settings）都加底色。
+
 ## macOS 26 / Swift 5.9 / SDK 27
 
 - `deploymentTarget.macOS = "26.0"`
 - `SWIFT_VERSION = "5.9"`
-- `MARKETING_VERSION = "1.0.0"` 写在 `project.yml`，xcodebuild Release 时 `--release` 数字同步。
+- `MARKETING_VERSION` 写在 `project.yml`，xcodebuild Release 时 `--release` 数字同步。手动 bump；不要自动化脚本。
 - `ENABLE_APP_SANDBOX = NO`：`fileImporter` 在沙箱外才有合理行为；用户给的目录直接写。
 - 用了 `Set<AnyCancellable>` 与 `async/await`、`@MainActor` 隔离。Combine 仅在 AppState 里订阅 settings 变化用一处。
 

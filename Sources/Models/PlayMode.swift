@@ -56,10 +56,29 @@ struct ReleaseInfo: Codable, Hashable {
     let publishedAt: Date
     let assets: [ReleaseAsset]
     let isPrerelease: Bool
+
+    // GitHub API 字段是 snake_case，但 Swift 这边习惯 camelCase + 缩写大写（URL）
+    // + is 前缀——convertFromSnakeCase 处理不了这两点（`html_url` 会变 `htmlUrl`
+    // 而我们要 `htmlURL`；`prerelease` 不变而我们要 `isPrerelease`）。手动声明。
+    enum CodingKeys: String, CodingKey {
+        case tagName = "tag_name"
+        case name
+        case body
+        case htmlURL = "html_url"
+        case publishedAt = "published_at"
+        case assets
+        case isPrerelease = "prerelease"
+    }
 }
 
 struct ReleaseAsset: Codable, Hashable {
     let name: String
     let browserDownloadURL: URL
     let size: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case browserDownloadURL = "browser_download_url"
+        case size
+    }
 }

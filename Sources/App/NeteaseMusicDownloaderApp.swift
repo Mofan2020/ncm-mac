@@ -40,10 +40,18 @@ struct NeteaseMusicDownloaderApp: App {
         }
 
         Settings {
-            SettingsView()
+            // macOS 系统级 Settings 窗口（Cmd+,）也用 SettingsView，独立持有 selectedTab
+            // 状态（不与主窗口 ContentView 共享——系统设置窗口生命周期独立）。
+            SettingsViewStandalone()
                 .environmentObject(appState)
         }
     }
+}
+
+/// 独立实例给 macOS 系统设置窗口用：与主窗口 ContentView 互不影响 selectedTab。
+private struct SettingsViewStandalone: View {
+    @State private var selection: SettingsView.SettingsTab = .account
+    var body: some View { SettingsView(selection: $selection) }
 }
 
 /// AppDelegate 负责 macOS 26 的玻璃背景 / 标题栏样式等需要 NSAppearance 的细节。

@@ -47,7 +47,28 @@ NeteaseMusicDownloader-macOS-x64.zip
 └── NeteaseMusicDownloader.app/
 ```
 
-未做 Apple Developer 签名。Release notes 由 `softprops/action-gh-release` 自动生成。
+未做 Apple Developer 签名。Release notes 由 `softprops/action-gh-release` 自动生成。workflow 跑完立刻用 `gh release edit <tag> --prerelease` 标 Pre-release（见下方规则）。
+
+## 发版规则（硬性）
+
+> 没经用户实测确认的版本只能做 Pre-release，不可作为正式版。
+
+`softprops/action-gh-release` 默认创建正式版，但本项目规则是**没经用户手测 → 必须 Pre-release**。流程：
+
+1. commit + push 修复 → CI 跑过 → `project.yml` 改 `MARKETING_VERSION` + commit + push main
+2. `git tag vX.Y.Z && git push origin vX.Y.Z` 触发 release workflow
+3. **workflow 创建 release 后立刻** `gh release edit vX.Y.Z --prerelease`（CI 推送 release 资产后第一时间）
+4. 通知用户去测，等用户回复"通过"
+5. 用户确认后 `gh release edit vX.Y.Z --prerelease=false` 升正式版
+
+如果实测发现新 bug，按 `bump version` 走下一个小版本（v1.0.0 → v1.0.1 → v1.0.2 ...），不要复用已发布的 tag。
+
+## 版本日志
+
+- **v1.0.3 (Pre-release)** — 修复设置跳 tab + 语言切换 + 检查更新 snake_case
+- **v1.0.2 (Pre-release)** — 修复 4 个 UI 残 bug + 强制刷新全部缓存按钮
+- **v1.0.1 (Pre-release)** — 修复扫码登录 + 设置页 5 个 UI 问题
+- **v1.0.0** — 首版
 
 ## 校验
 

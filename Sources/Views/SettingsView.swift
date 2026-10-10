@@ -3,34 +3,47 @@ import AppKit
 import Combine
 
 /// 设置页：账号 / 通用 / 下载 / 播放 / 外观 / 更新。
+/// `selection` binding 由父视图（ContentView）持有，不能用 @State——否则父视图重算
+/// 子视图重建，@State 重置回 .account（"改主题/语言跳回账号 tab" bug）。
 struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
-    @State private var selectedTab: SettingsTab = .account
+    @Binding var selection: SettingsTab
 
     enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
         case account, general, download, playback, appearance, update
         var id: String { rawValue }
+
+        var title: LocalizedStringKey {
+            switch self {
+            case .account:    return "settings.tab.account"
+            case .general:    return "settings.tab.general"
+            case .download:   return "settings.tab.download"
+            case .playback:   return "settings.tab.playback"
+            case .appearance: return "settings.tab.appearance"
+            case .update:     return "settings.tab.update"
+            }
+        }
     }
 
     var body: some View {
-        TabView(selection: $selectedTab) {
+        TabView(selection: $selection) {
             accountTab
-                .tabItem { Label("账号", systemImage: "person.crop.circle") }
+                .tabItem { Label("settings.tab.account", systemImage: "person.crop.circle") }
                 .tag(SettingsTab.account)
             generalTab
-                .tabItem { Label("通用", systemImage: "gearshape") }
+                .tabItem { Label("settings.tab.general", systemImage: "gearshape") }
                 .tag(SettingsTab.general)
             downloadTab
-                .tabItem { Label("下载", systemImage: "arrow.down.circle") }
+                .tabItem { Label("settings.tab.download", systemImage: "arrow.down.circle") }
                 .tag(SettingsTab.download)
             playbackTab
-                .tabItem { Label("播放", systemImage: "play.circle") }
+                .tabItem { Label("settings.tab.playback", systemImage: "play.circle") }
                 .tag(SettingsTab.playback)
             appearanceTab
-                .tabItem { Label("外观", systemImage: "paintbrush") }
+                .tabItem { Label("settings.tab.appearance", systemImage: "paintbrush") }
                 .tag(SettingsTab.appearance)
             updateTab
-                .tabItem { Label("更新", systemImage: "arrow.triangle.2.circlepath") }
+                .tabItem { Label("settings.tab.update", systemImage: "arrow.triangle.2.circlepath") }
                 .tag(SettingsTab.update)
         }
         .frame(width: 640, height: 480)

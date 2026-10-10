@@ -1,0 +1,7 @@
+/* Settings tabs */
+"settings.tab.account" = "Account";
+"settings.tab.general" = "General";
+"settings.tab.download" = "Download";
+"settings.tab.playback" = "Playback";
+"settings.tab.appearance" = "Appearance";
+"settings.tab.update" = "Update";
