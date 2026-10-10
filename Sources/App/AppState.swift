@@ -59,6 +59,24 @@ final class AppState: ObservableObject {
                 updater?.channel = channel
             }
             .store(in: &cancellables)
+        // 转发 settings 内部字段变化到 appState 的 objectWillChange，
+        // 否则 SwiftUI 视图（如 SettingsView 的 Picker / Stepper）只读到
+        // settings 启动时的快照，写入成功但不重渲染。
+        settings.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+        // 同样转发 updater：SettingsView 用的是 appState.updater（updater 在 AppState
+        // 里是 let，子 ObservableObject 不会被视图自动订阅；不转发则点"立即检查"
+        // 后 isChecking/lastError/latest 都不刷新，UI 没反应）。
+        updater.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
         // 启动后若开启自动更新，5s 后静默检查一次
         if settings.autoCheckUpdates {
             Task { [weak updater] in

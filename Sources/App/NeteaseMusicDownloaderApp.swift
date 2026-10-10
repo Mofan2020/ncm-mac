@@ -11,6 +11,11 @@ struct NeteaseMusicDownloaderApp: App {
             ContentView()
                 .environmentObject(appState)
                 .frame(minWidth: 780, minHeight: 560)
+                // 把 settings 里的 theme / language / liquidGlass 投射到 SwiftUI 环境上。
+                // 视图层读 appState.settings.foo 即可，但视觉/语言/材质的应用必须在根上挂。
+                .modifier(ThemingModifier(theme: appState.settings.theme))
+                .modifier(LocaleModifier(language: appState.settings.language))
+                .modifier(MaterialModifier(enabled: appState.settings.liquidGlassEnabled))
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)
@@ -47,5 +52,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+}
+
+// MARK: - Settings 投射到 SwiftUI 环境
+//
+// SettingsView 改 settings.foo 后，AppState 转发 objectWillChange，
+// ContentView / WindowGroup 根视图 body 重算 → modifier 重新求值 →
+// 新值进入 SwiftUI 环境，全局生效。
+
+struct ThemingModifier: ViewModifier {
+    let theme: AppTheme
+    func body(content: Content) -> some View {
+        content.preferredColorScheme(theme.colorScheme)
+    }
+}
+
+struct LocaleModifier: ViewModifier {
+    let language: AppLanguage
+    func body(content: Content) -> some View {
+        if let id = language.localeIdentifier {
+            return AnyView(content.environment(\.locale, Locale(identifier: id)))
+        } else {
+            return AnyView(content)
+        }
+    }
+}
+
+struct MaterialModifier: ViewModifier {
+    let enabled: Bool
+    func body(content: Content) -> some View {
+        // liquidGlassEnabled 控制 sidebar / detail 的玻璃材质。
+        // 关闭时退回普通背景。
+        if enabled {
+            return AnyView(content)
+        } else {
+            return AnyView(content.background(.background))
+        }
     }
 }

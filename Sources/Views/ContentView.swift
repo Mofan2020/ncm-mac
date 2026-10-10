@@ -33,18 +33,25 @@ struct ContentView: View {
 
     @ViewBuilder
     private var detail: some View {
-        switch appState.selectedTab {
-        case .download:
-            DownloadView()
-        case .play:
-            PlayView()
-        case .library:
-            LibraryView()
-        case .localMusic:
-            LocalMusicView()
-        case .settings:
-            SettingsView()
+        // detail 区需要显式底色：NSWindow 被 WindowAccessor 设为 .clear 透出 sidebar 的玻璃材质，
+        // 但 detail 区域默认不画背景，会直接透出桌面色（macOS 26 NavigationSplitView 行为），
+        // 导致文字看不清。挂一个 regularMaterial 与 sidebar 视觉一致。
+        Group {
+            switch appState.selectedTab {
+            case .download:
+                DownloadView()
+            case .play:
+                PlayView()
+            case .library:
+                LibraryView()
+            case .localMusic:
+                LocalMusicView()
+            case .settings:
+                SettingsView()
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.regularMaterial)
     }
 
     private var errorBinding: Binding<Bool> {

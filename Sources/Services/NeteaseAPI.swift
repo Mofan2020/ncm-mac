@@ -42,6 +42,14 @@ final class NeteaseAPI {
 
     static let legacyHost = "https://music.163.com"
 
+    /// 浏览器风格的 User-Agent：网易云部分 legacy 接口对 UA 有要求（"PC" 客户端身份能拿到 cookie）。
+    static let userAgent =
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        + "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15"
+
+    /// 官方 PC 客户端的身份 cookie（os/appver/channel），登录相关接口在无 cookie 时会拒绝。
+    static let clientCookieHeader = "os=pc; appver=8.9.70; channel=netease"
+
     // MARK: - State
 
     private let deviceId: String
@@ -348,11 +356,17 @@ final class NeteaseAPI {
     // MARK: - Legacy QR
 
     func qrKey() async throws -> String {
-        var request = URLRequest(url: URL(string: "\(Self.legacyHost)/api/login/qrcode/unikey")!)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        // legacy 接口：GET + query string，不需要 eapi 加密。Python ncm 走的就是这条。
+        var components = URLComponents(string: "\(Self.legacyHost)/api/login/qrcode/unikey")!
+        components.queryItems = [
+            URLQueryItem(name: "type", value: "1"),
+            URLQueryItem(name: "timestamp", value: String(Int(Date().timeIntervalSince1970 * 1000))),
+        ]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "GET"
         request.setValue("gzip, deflate", forHTTPHeaderField: "Accept-Encoding")
-        request.httpBody = Data("type=1".utf8)
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(Self.clientCookieHeader, forHTTPHeaderField: "Cookie")
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw APIError.httpStatus((response as? HTTPURLResponse)?.statusCode ?? -1, data)
@@ -365,21 +379,35 @@ final class NeteaseAPI {
     }
 
     func qrPoll(unikey: String) async throws -> (code: Int, cookie: String?) {
-        var request = URLRequest(url: URL(string: "\(Self.legacyHost)/api/login/qrcode/client/login")!)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.setValue("gzip, deflate", forHTTPHeaderField: "Accept-Encoding")
-        let body = "type=1&key=\(unikey.urlEncoded)"
-        request.httpBody = Data(body.utf8)
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw APIError.httpStatus((response as? HTTPURLResponse)?.statusCode ?? -1, data)
-        }
+        // qrcode 状态轮询走 eapi 通道（POST /eapi/.../client/login），服务端返回的
+        // code/cookie 字段可能嵌套在 data 下；Python ncm 的 _qr_code_of / _qr_cookie_of
+        // 就是为了兼容这种嵌套结构。
+        let payload: OrderedDict = [
+            ("key", .string(unikey)),
+            ("type", .int(1)),
+        ]
+        let data = try await eapi(path: "/api/login/qrcode/client/login", payload: payload)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw APIError.invalidJSON
         }
-        let code = json["code"] as? Int ?? -1
-        let cookie = (json["cookie"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        // code / cookie 可能直接出现，也可能在 data.* 嵌套里。
+        let nested = (json["data"] as? [String: Any]) ?? [:]
+        let code: Int = {
+            if let n = nested["code"] as? Int { return n }
+            if let n = json["code"] as? Int { return n }
+            return -1
+        }()
+        let cookie: String? = {
+            if let s = nested["cookie"] as? String, !s.isEmpty { return s }
+            if let s = json["cookie"] as? String, !s.isEmpty { return s }
+            if let dict = nested["cookies"] as? [String: String], !dict.isEmpty {
+                return dict.map { "\($0.key)=\($0.value)" }.joined(separator: "; ")
+            }
+            if let dict = json["cookies"] as? [String: String], !dict.isEmpty {
+                return dict.map { "\($0.key)=\($0.value)" }.joined(separator: "; ")
+            }
+            return nil
+        }()
         return (code, cookie)
     }
 
